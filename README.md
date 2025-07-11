@@ -1,3 +1,10 @@
+# Carbon Direct's Fork of PyPSA-USA
+
+## To get this codebase set up on your machine, clone it and follow the instructions on the readthedocs (see below) 
+
+## If you plan on contributing, please also install developer dependecies (available in the readthedocs)
+
+
 [![DOI](https://zenodo.org/badge/500892486.svg)](https://zenodo.org/doi/10.5281/zenodo.10815964)
 [![Documentation Status](https://readthedocs.org/projects/pypsa-usa/badge/?version=latest)](https://pypsa-usa.readthedocs.io/en/latest/?badge=latest)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)

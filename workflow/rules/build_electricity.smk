@@ -568,6 +568,29 @@ rule build_powerplants:
         "../scripts/build_powerplants.py"
 
 
+def get_powerplants_input(wildcards):
+    if config["enable"].get("retrofits", False):
+        return RESOURCES + "powerplants.retrofitted.csv"
+    else:
+        return RESOURCES + "powerplants.csv"
+
+
+rule apply_retrofits:
+    input:
+        powerplants=RESOURCES + "powerplants.csv",
+        tech_costs=RESOURCES
+        + f"costs/costs_{config['scenario']['planning_horizons'][0]}.csv",
+    output:
+        powerplants=RESOURCES + "powerplants.retrofitted.csv",
+    log:
+        "logs/apply_retrofits.log",
+    threads: 1
+    resources:
+        mem_mb=5000,
+    script:
+        "../scripts/apply_retrofit.py"
+
+
 rule add_electricity:
     params:
         length_factor=config["lines"]["length_factor"],
@@ -605,7 +628,7 @@ rule add_electricity:
         regions_offshore=RESOURCES
         + "{interconnect}/Geospatial/regions_offshore.geojson",
         reeds_shapes=RESOURCES + "{interconnect}/Geospatial/reeds_shapes.geojson",
-        powerplants=RESOURCES + "powerplants.csv",
+        powerplants=get_powerplants_input,
         plants_breakthrough=DATA + "breakthrough_network/base_grid/plant.csv",
         hydro_breakthrough=DATA + "breakthrough_network/base_grid/hydro.csv",
         bus2sub=RESOURCES + "{interconnect}/bus2sub.csv",
