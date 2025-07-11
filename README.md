@@ -1,8 +1,7 @@
 # Carbon Direct's Fork of PyPSA-USA
 
-## To get this codebase set up on your machine, clone it and follow the instructions on the readthedocs (see below) 
-
-## If you plan on contributing, please also install developer dependecies (available in the readthedocs)
+- To get this codebase set up on your machine, clone it and follow the instructions on the readthedocs (see below)
+- If you plan on contributing, please also install developer dependecies (available in the readthedocs)
 
 
 [![DOI](https://zenodo.org/badge/500892486.svg)](https://zenodo.org/doi/10.5281/zenodo.10815964)
