@@ -569,7 +569,7 @@ rule build_powerplants:
 
 
 def get_powerplants_input(wildcards):
-    if config["enable"].get("retrofits", False):
+    if config["retrofits"]["enable"]:
         return RESOURCES + "powerplants.retrofitted.csv"
     else:
         return RESOURCES + "powerplants.csv"
