@@ -35,4 +35,4 @@ Static Assumptions: The heat rate penalty and capture rate are assumed to be con
 - We should consider dynamic fuel costs and how these might impact wholesale power prices (this is a configurable option)
 - We are ignoring capital costs in this model and solely focusing on operational changes resulting from the heat rate penalty.
 - Handling export into SPP can probably be done by simply adding a node (or nodes) to the network with some set level of demand. 
-
+- Questions of net capacity reduction vs heat rate penalty need to be resolved. For instance, if I take a 10% heat rate hit, do I also need to model the parasitic load's impact on net capacity? Something to think about. 

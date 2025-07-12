@@ -13,7 +13,7 @@ dconf
 
 # configuration files
 config/
-
+projects/
 # generated files
 results/
 resources/
