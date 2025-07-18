@@ -829,6 +829,7 @@ def merge_fc_hr_data(
     temporal_data: pd.DataFrame,
     target_field_name: str,
 ):
+    temporal_data = temporal_data.copy()
     temporal_data["generator_name"] = (
         temporal_data["plant_name_eia"].astype(str)
         + "_"

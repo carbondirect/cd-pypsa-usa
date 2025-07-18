@@ -25,6 +25,7 @@ EMISSIONS_DATA = [
     {"pypsa-name": "gas", "parameter": "co2_emissions", "value": 0.18058},
     {"pypsa-name": "CCGT", "parameter": "co2_emissions", "value": 0.18058},
     {"pypsa-name": "OCGT", "parameter": "co2_emissions", "value": 0.18058},
+    {"pypsa-name": "CCGT-retrofit", "parameter": "co2_emissions", "value": 0.18058},
     {
         "pypsa-name": "geothermal",
         "parameter": "heat_rate_mmbtu_per_mwh",
@@ -39,6 +40,7 @@ LIFETIME_DATA = [
     {"pypsa-name": "geothermal", "parameter": "lifetime", "value": 70},
     {"pypsa-name": "waste", "parameter": "lifetime", "value": 55},  # using gas CT
     {"pypsa-name": "CCGT", "parameter": "lifetime", "value": 55},
+    {"pypsa-name": "CCGT-retrofit", "parameter": "lifetime", "value": 55},
     {"pypsa-name": "OCGT", "parameter": "lifetime", "value": 55},
     {"pypsa-name": "CCGT-95CCS", "parameter": "lifetime", "value": 55},
     {"pypsa-name": "CCGT-97CCS", "parameter": "lifetime", "value": 55},
@@ -413,6 +415,7 @@ if __name__ == "__main__":
     tech_fuel_map = {
         "CCGT": "natural_gas",
         "OCGT": "natural_gas",
+        "CCGT-retrofit": "natural_gas",
         "CCGT-95CCS": "natural_gas",
         "CCGT-97CCS": "natural_gas",
         "coal-95CCS": "coal",

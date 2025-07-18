@@ -569,10 +569,7 @@ rule build_powerplants:
 
 
 def get_powerplants_input(wildcards):
-    if config["retrofits"]["enable"]:
-        return RESOURCES + "powerplants.retrofitted.csv"
-    else:
-        return RESOURCES + "powerplants.csv"
+    return RESOURCES + "powerplants.csv"
 
 
 rule apply_retrofits:
@@ -620,7 +617,7 @@ rule add_electricity:
             f"gen_cost_mult_{Path(x).stem}": f"repo_data/locational_multipliers/{Path(x).name}"
             for x in Path("repo_data/locational_multipliers/").glob("*")
         },
-        base_network=RESOURCES + "{interconnect}/elec_base_network_dem.nc",
+        network=RESOURCES + "{interconnect}/elec_base_network_dem.nc",
         tech_costs=RESOURCES
         + f"costs/costs_{config['scenario']['planning_horizons'][0]}.csv",
         # attach first horizon costs

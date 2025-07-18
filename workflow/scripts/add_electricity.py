@@ -393,72 +393,161 @@ def attach_conventional_generators(
     unit_commitment=None,
     fuel_price=None,
 ):
-    carriers = [
-        carrier
-        for carrier in set(conventional_carriers) | set(extendable_carriers["Generator"])
-        if carrier not in renewable_carriers
-    ]
-    add_missing_carriers(n, carriers)
+    """
+    Attaches conventional generators to the network.
 
-    plants = (
-        plants.query("carrier in @carriers")
-        .join(costs, on="carrier", rsuffix="_r")
-        .rename(index=lambda s: "C" + str(s))
-    )
+    This function processes a DataFrame of power plants, filters for
+    conventional carriers, and adds them to the PyPSA network object. It
+    handles retrofitting logic, cost updates, and other generator-specific
+    attributes.
+    """
+    # get retrofit plants from config
+    retro_cfg = conventional_inputs.get("retrofits", {})
+    retro_targets = retro_cfg.get("targets", [])
+    retro_pids = [d["plant_id_eia"] for d in retro_targets]
 
-    plants["efficiency"] = plants.efficiency.astype(float).fillna(plants.efficiency_r)
+    # Store a copy of the original plant data to preserve retrofit-specific values
+    plants_og = plants.copy()
 
-    plants.loc[:, "p_min_pu"] = plants.minimum_load_mw / plants.p_nom
-    plants.loc[:, "p_min_pu"] = (
-        plants.p_min_pu.clip(
-            upper=np.minimum(plants.summer_derate, plants.winter_derate),
-            lower=0,
+    # Filter out plants that are targeted for retrofitting, these will be handled later
+    if retro_cfg.get("enable", False):
+        retrofit_target_plants = plants[plants.plant_id_eia.isin(retro_pids)]
+        plants = plants[~plants.plant_id_eia.isin(retro_pids)]
+
+    # # Filter out plants that are targeted for retrofitting so they can be handled seperately
+    # retrofit_target_plants = plants[plants.plant_id_eia.isin(retro_pids)]
+    # plants = plants[~plants.plant_id_eia.isin(retro_pids)]
+
+    plants = plants[plants.carrier.isin(conventional_carriers)].copy()
+    plants = plants[~plants.index.duplicated(keep="first")]
+
+    for tech in conventional_carriers:
+        plants_regional = plants.copy()
+        logger.info(f"Region plant attributes (initial) {plants_regional.columns}")
+        # Store a copy of the original plant data to preserve retrofit-specific values
+        plants_original = plants_regional.copy()
+
+        # -------------------------------------------------------------
+        # Map generic cost parameters ONLY where the plant-level value
+        # is missing.  This keeps retrofit-specific overrides intact.
+        # -------------------------------------------------------------
+        for param in costs.columns:
+            mapped = plants_regional.carrier.map(costs[param])
+            if param in plants_regional.columns:
+                plants_regional[param] = plants_regional[param].fillna(mapped)
+            else:
+                plants_regional[param] = mapped
+
+        # Finally, restore any retrofit-specific values that still differ
+        # from the generic mapping.  combine_first keeps non-NaNs from the
+        # original and fills remaining NaNs from the generic columns.
+        plants_regional = plants_original.combine_first(plants_regional)
+
+        # if a VOM is provided for a carrier, overwrite the cost data
+        if "vom_cost" in conventional_inputs:
+            for carrier, vom in conventional_inputs["vom_cost"].items():
+                if carrier in conventional_carriers:
+                    plants_regional.loc[plants_regional.carrier == carrier, "vom_cost"] = vom
+
+        # if a fuel_cost is provided for a carrier, overwrite the cost data
+        if "fuel_cost" in conventional_inputs:
+            for carrier, fuel_cost in conventional_inputs["fuel_cost"].items():
+                if carrier in conventional_carriers:
+                    plants_regional.loc[
+                        plants_regional.carrier == carrier, "fuel_cost"
+                    ] = fuel_cost
+
+        # if a heat_rate is provided for a carrier, overwrite the cost data
+        if "heat_rate" in conventional_inputs:
+            for carrier, heat_rate in conventional_inputs["heat_rate"].items():
+                if carrier in conventional_carriers:
+                    plants_regional.loc[
+                        plants_regional.carrier == carrier, "heat_rate"
+                    ] = heat_rate
+
+        # if a balancing_authority_code is provided for a carrier, overwrite the cost data
+        if "ba_eia" in conventional_inputs:
+            for carrier, ba_eia in conventional_inputs["ba_eia"].items():
+                if carrier in conventional_carriers:
+                    plants_regional.loc[plants_regional.carrier == carrier, "ba_eia"] = ba_eia
+
+        # if a ads_balancing_area is provided for a carrier, overwrite the cost data
+        if "ba_ads" in conventional_inputs:
+            for carrier, ba_ads in conventional_inputs["ba_ads"].items():
+                if carrier in conventional_carriers:
+                    plants_regional.loc[
+                        plants_regional.carrier == carrier, "ba_ads"
+                    ] = ba_ads
+
+        plants_regional["efficiency"] = plants_regional["efficiency"].astype(float)
+        logger.info(f"Regional plant attributes (after effiency and cost mapping) {plants_regional.columns}")
+        plants_regional.loc[:, "p_min_pu"] = (
+            plants_regional.minimum_load_mw / plants_regional.p_nom
         )
-        .astype(float)
-        .fillna(0)
-    )
-    committable_fields = ["start_up_cost", "min_down_time", "min_up_time", "p_min_pu"]
-    for attr in committable_fields:
-        default = pypsa.components.component_attrs["Generator"].default[attr]
-        if unit_commitment:
-            plants[attr] = plants[attr].astype(float).fillna(default)
-        else:
-            plants[attr] = default
-    committable_attrs = {attr: plants[attr] for attr in committable_fields}
+        plants_regional.loc[:, "p_min_pu"] = (
+            plants_regional.p_min_pu.clip(
+                upper=np.minimum(plants_regional.summer_derate, plants_regional.winter_derate),
+                lower=0,
+            )
+            .astype(float)
+            .fillna(0)
+        )
+        committable_fields = ["start_up_cost", "min_down_time", "min_up_time", "p_min_pu"]
+        for attr in committable_fields:
+            default = pypsa.components.component_attrs["Generator"].default[attr]
+            if unit_commitment:
+                plants_regional[attr] = plants_regional[attr].astype(float).fillna(default)
+            else:
+                plants_regional[attr] = default
+        committable_attrs = {attr: plants_regional[attr] for attr in committable_fields}
 
-    # Define generators using modified ppl DataFrame
-    caps = plants.groupby("carrier").p_nom.sum().div(1e3).round(2)
-    logger.info(f"Adding {len(plants)} generators with capacities [GW] \n{caps}")
-    n.madd(
-        "Generator",
-        plants.index,
-        carrier=plants.carrier,
-        bus=plants.bus_assignment,
-        p_nom_min=plants.p_nom.where(
-            plants.carrier.isin(conventional_carriers),
-            0,
-        ),  # enforces that plants cannot be retired/sold-off at their capital cost
-        p_nom=plants.p_nom.where(plants.carrier.isin(conventional_carriers), 0),
-        p_nom_extendable=plants.carrier.isin(extendable_carriers["Generator"]),
-        ramp_limit_up=plants.ramp_limit_up,
-        ramp_limit_down=plants.ramp_limit_down,
-        efficiency=plants.efficiency.round(3),
-        marginal_cost=plants.marginal_cost,
-        capital_cost=plants.annualized_capex_fom,
-        build_year=plants.build_year.astype(int).fillna(0),
-        lifetime=plants.carrier.map(costs.lifetime),
-        committable=unit_commitment,
-        **committable_attrs,
-    )
+        # Define generators using modified ppl DataFrame
+        caps = plants_regional.groupby("carrier").p_nom.sum().div(1e3).round(2)
+        logger.info(f"Adding {len(plants_regional)} generators with capacities [GW] \n{caps}")
+        n.madd(
+            "Generator",
+            plants_regional.index,
+            carrier=plants_regional.carrier,
+            bus=plants_regional.bus_assignment.astype(str),
+            p_nom_min=plants_regional.p_nom.where(
+                plants_regional.carrier.isin(conventional_carriers),
+                0,
+            ),  # enforces that plants cannot be retired/sold-off at their capital cost
+            p_nom=plants_regional.p_nom.where(plants_regional.carrier.isin(conventional_carriers), 0),
+            p_nom_extendable=plants_regional.carrier.isin(extendable_carriers["Generator"]),
+            ramp_limit_up=plants_regional.ramp_limit_up,
+            ramp_limit_down=plants_regional.ramp_limit_down,
+            efficiency=plants_regional.efficiency.round(3),
+            marginal_cost=plants_regional.marginal_cost,
+            capital_cost=plants_regional.annualized_capex_fom,
+            build_year=plants_regional.build_year.astype(int).fillna(0),
+            lifetime=plants_regional.carrier.map(costs.lifetime),
+            committable=unit_commitment,
+            **committable_attrs,
+        )
 
-    # Add fuel and VOM costs to the network
-    n.generators.loc[plants.index, "vom_cost"] = plants.carrier.map(
-        costs.opex_variable_per_mwh,
-    )
-    n.generators.loc[plants.index, "fuel_cost"] = plants.fuel_cost
-    n.generators.loc[plants.index, "heat_rate"] = plants.heat_rate_mmbtu_per_mwh
-    n.generators.loc[plants.index, "ba_eia"] = plants.balancing_authority_code
-    n.generators.loc[plants.index, "ba_ads"] = plants.ads_balancing_area
+        # Add fuel and VOM costs to the network
+        n.generators.loc[plants_regional.index, "vom_cost"] = plants_regional.carrier.map(
+            costs.opex_variable_per_mwh,
+        )
+        n.generators.loc[plants_regional.index, "fuel_cost"] = plants_regional.fuel_cost
+        # Use the unified column name coming from build_powerplants.py
+        n.generators.loc[plants_regional.index, "heat_rate"] = (
+            plants_regional.heat_rate
+        )
+
+        # ------------------------------------------------------------------
+        # Ensure carrier-level CO₂ intensity reflects any retrofit penalties
+        # ------------------------------------------------------------------
+        if "co2_emissions" in plants_regional.columns:
+            carrier_emissions = (
+                plants_regional.groupby("carrier")["co2_emissions"].first()
+            )
+            for carrier, emis in carrier_emissions.items():
+                if not np.isnan(emis):
+                    n.carriers.at[carrier, "co2_emissions"] = emis
+        n.generators.loc[plants_regional.index, "ba_eia"] = plants_regional.balancing_authority_code
+        n.generators.loc[plants_regional.index, "ba_ads"] = plants_regional.ads_balancing_area
 
 
 def normed(s):
@@ -694,24 +783,50 @@ def broadcast_investment_horizons_index(n: pypsa.Network, df: pd.DataFrame):
     Broadcast the index of a dataframe to match the potentially multi-indexed
     investment periods of a PyPSA network.
     """
+    # MultiIndex (period, timestamp)
     sns = n.snapshots
-    if not len(df.index) == len(sns):  # if broadcasting is necessary
-        df.index = pd.to_datetime(df.index)
-        dfs = []
-        for planning_horizon in n.investment_periods.to_list():
-            period_data = df.copy()
-            period_data.index = df.index.map(lambda x: x.replace(year=planning_horizon))
-            dfs.append(period_data)
-        df = pd.concat(dfs)
-        df = pd.merge(
-            df,
-            sns.to_frame().droplevel(0),
-            left_index=True,
-            right_index=True,
-        ).drop(columns=["period", "timestep"])
-        assert len(df.index) == len(sns)
-    df.index = sns
-    return df
+
+    # Work on a copy to avoid mutating caller's data
+    df = df.copy()
+    df.index = pd.to_datetime(df.index)
+
+    # Fast-path: already matches the full set of snapshots
+    if len(df.index) == len(sns):
+        df.index = sns
+        return df
+
+    # Otherwise broadcast the single-year profile to every investment period
+    period_dfs: list[pd.DataFrame] = []
+    for period in n.investment_periods.to_list():
+        # The subset of snapshots belonging to the current period
+        period_snapshots = sns[sns.get_level_values(0) == period]
+
+        # Clone the profile and set its year to the planning horizon
+        df_period = df.copy()
+        df_period.index = df.index.map(lambda ts: ts.replace(year=period))
+
+        # Align to the exact timestamps of the period.  If some hours are
+        # missing (e.g. Feb-29 in a leap year) fill them by carrying forward
+        # the previous hour.  This is conservative but avoids failures when
+        # mixing leap and non-leap calendars.
+        df_period = df_period.reindex(
+            period_snapshots.get_level_values(1),
+            method="ffill",
+        )
+
+        # Put the MultiIndex back so it lines up with n.snapshots
+        df_period.index = period_snapshots
+        period_dfs.append(df_period)
+
+    df_broadcast = pd.concat(period_dfs)
+
+    # Final consistency check – this should now match exactly
+    assert len(df_broadcast.index) == len(sns), (
+        "broadcast_investment_horizons_index: "
+        "mismatch after broadcasting"
+    )
+
+    return df_broadcast
 
 
 def apply_seasonal_capacity_derates(
@@ -728,7 +843,7 @@ def apply_seasonal_capacity_derates(
     # conventional_carriers = ['geothermal'] # testing override impact
 
     conv_plants = plants.query("carrier in @conventional_carriers")
-    conv_plants.index = "C" + conv_plants.index
+    # keep identical generator IDs to ensure alignment with the network
     conv_gens = n.generators.query("carrier in @conventional_carriers")
 
     p_max_pu = pd.DataFrame(1.0, index=sns_dt, columns=conv_gens.index)
@@ -756,7 +871,7 @@ def apply_must_run_ratings(
 ):
     """Applies Minimum Loading Capacities only to WECC ADS designated Plants."""
     conv_plants = plants.query("carrier in @conventional_carriers").copy()
-    conv_plants.index = "C" + conv_plants.index
+    # keep identical generator IDs to ensure alignment with the network
 
     conv_plants.loc[:, "ads_mustrun"] = conv_plants.ads_mustrun.infer_objects(
         copy=False,
@@ -793,18 +908,18 @@ def attach_breakthrough_renewable_plants(
     extendable_carriers,
     costs,
 ):
-    add_missing_carriers(n, renewable_carriers)
+    plants = pd.read_csv(fn_plants)
+    plants = plants.rename(columns={"Plant name": "name", "Technology": "carrier"})
+    plants.index = plants["name"]
 
-    plants = pd.read_csv(fn_plants, dtype={"bus_id": str}, index_col=0).query(
-        "bus_id in @n.buses.index",
-    )
-    plants = plants.replace(["wind_offshore"], ["offwind"])
+    # Drop any plants that are already in the network
+    plants = plants[~plants.index.isin(n.generators.index)]
 
     for tech in renewable_carriers:
-        assert tech == "hydro"
-        tech_plants = plants.query("type == @tech")
-        tech_plants.index = tech_plants.index.astype(str)
-        logger.info(f"Adding {len(tech_plants)} {tech} generators to the network.")
+        tech_plants = plants[plants.carrier == tech].copy()
+
+        if tech_plants.empty:
+            continue
 
         p_nom_be = pd.read_csv(snakemake.input[f"{tech}_breakthrough"], index_col=0)
 
@@ -873,7 +988,8 @@ def apply_pudl_fuel_costs(
     pudl_fuel_costs = broadcast_investment_horizons_index(n, pudl_fuel_costs)
 
     # Drop any columns that are not in the network
-    pudl_fuel_costs.columns = "C" + pudl_fuel_costs.columns
+    # keep original generator IDs for alignment
+    pudl_fuel_costs.columns = pudl_fuel_costs.columns
     pudl_fuel_costs = pudl_fuel_costs[[x for x in pudl_fuel_costs.columns if x in n.generators.index]]
 
     # drop any data that has been assigned at a coarser resolution
@@ -895,7 +1011,7 @@ def main(snakemake):
     params = snakemake.params
     interconnection = snakemake.wildcards["interconnect"]
 
-    n = pypsa.Network(snakemake.input.base_network)
+    n = pypsa.Network(snakemake.input.network)
 
     regions_onshore = gpd.read_file(snakemake.input.regions_onshore)
     regions_offshore = gpd.read_file(snakemake.input.regions_offshore)
@@ -1082,6 +1198,9 @@ if __name__ == "__main__":
     if "snakemake" not in globals():
         from _helpers import mock_snakemake
 
-        snakemake = mock_snakemake("add_electricity", interconnect="western")
+        snakemake = mock_snakemake(
+            "add_electricity",
+            interconnect="texas",
+        )
     configure_logging(snakemake)
     main(snakemake)
